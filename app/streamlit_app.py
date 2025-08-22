@@ -133,6 +133,27 @@ body {{ background-color: {bg_color}; color: {text_color}; font-family: 'Segoe U
     background-color: #1E40AF;
     transform: scale(1.05);
 }}
+.model-toggle {{
+    background-color: {card_bg};
+    padding: 10px;
+    border-radius: 12px;
+    margin-bottom: 15px;
+    border: 1px solid #e1e5e9;
+}}
+/* Mobile responsive styles */
+@media (max-width: 768px) {{
+    .main-header {{ font-size: 1.5rem; }}
+    .sub-header {{ font-size: 0.9rem; }}
+    .course-card {{ padding: 10px; }}
+    .skill-pill {{
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        min-width: 50px;
+    }}
+    .course-info-grid {{
+        grid-template-columns: 1fr;
+    }}
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -196,58 +217,50 @@ def load_courses_cached(path):
 courses = load_courses_cached("data/Coursera.csv")
 
 
-# ----------------- Extract Top Skills -----------------
+# ----------------- Performance Optimization -----------------
+# Pre-cache filtered data and optimize operations
 @st.cache_data
-def get_top_skills(courses_df, top_n=10):
-    # Extract all skills from the Gained Skills column
-    all_skills = []
-    for skills_str in courses_df['Gained Skills'].dropna():
-        skills = [skill.strip() for skill in skills_str.split(',')]
-        all_skills.extend(skills)
+def get_filtered_courses(_courses, search_terms, subject_filter, level_filter, institution_filter, min_rate):
+    filtered = _courses.copy()
 
-    # Count frequency of each skill
-    skill_counts = pd.Series(all_skills).value_counts()
-    return skill_counts.head(top_n).index.tolist()
+    if search_terms:
+        mask = pd.Series(False, index=filtered.index)
+        for term in search_terms:
+            if term:
+                term_mask = (
+                        filtered["Title"].str.contains(term, case=False, na=False) |
+                        filtered["Gained Skills"].str.contains(term, case=False, na=False)
+                )
+                mask = mask | term_mask
+        filtered = filtered[mask]
 
+    if subject_filter:
+        filtered = filtered[filtered["Subject"].isin(subject_filter)]
+    if level_filter:
+        filtered = filtered[filtered["Level"].isin(level_filter)]
+    if institution_filter:
+        filtered = filtered[filtered["Institution"].isin(institution_filter)]
 
-top_skills = get_top_skills(courses)
+    return filtered[filtered["Rate"] >= min_rate]
 
 
 # ----------------- Main App -----------------
 def main_app():
     user_profile = db.get_user_profile(st.session_state.user_id)
-    default_skills = ""
+    default_skills = "python, machine learning, Artificial Intelligence, HTML, CSS"
     if user_profile and user_profile.get('skill_interests'):
         default_skills = ", ".join(user_profile['skill_interests'])
 
-    # ----------------- Top Skills Section -----------------
-    st.subheader("🔥 Popular Skills")
-
-    # Initialize session state for search text if not exists
-    if 'search_text' not in st.session_state:
-        st.session_state.search_text = ""
-
-    # Create two rows of skill buttons
-    rows = [top_skills[:5], top_skills[5:10]]
-
-    for row_skills in rows:
-        cols = st.columns(len(row_skills))
-        for col_idx, skill in enumerate(row_skills):
-            with cols[col_idx]:
-                if st.button(
-                        skill,
-                        key=f"skill_{skill}",
-                        help=f"Add '{skill}' to search",
-                        use_container_width=True
-                ):
-                    # Add skill to search when clicked
-                    current_skills = [s.strip() for s in st.session_state.search_text.split(',') if s.strip()]
-                    if skill not in current_skills:
-                        if st.session_state.search_text:
-                            st.session_state.search_text += f", {skill}"
-                        else:
-                            st.session_state.search_text = skill
-                    st.rerun()
+    # ----------------- Model Selection Toggle -----------------
+    st.markdown("<div class='model-toggle'>", unsafe_allow_html=True)
+    st.subheader("🤖 Recommendation Model")
+    model_choice = st.radio(
+        "Choose recommendation algorithm:",
+        ["🧠 Neural Collaborative Filtering (NCF)", "📊 Singular Value Decomposition (SVD)"],
+        horizontal=True,
+        help="NCF uses neural networks for collaborative filtering, SVD uses matrix factorization"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -257,15 +270,15 @@ def main_app():
         with col1:
             search_text = st.text_input(
                 "🔍 Search courses or skills",
-                value=st.session_state.search_text,
+                value=st.session_state.get('search_text', ''),
                 placeholder="Python, Data Science, Marketing",
                 key="search_input"
             )
             st.session_state.search_text = search_text
         with col2:
-            show_filters = st.checkbox("⚙️ Show Filters")
+            show_filters = st.checkbox("⚙️ Filters")
         with col3:
-            top_n = st.number_input("📌 No. of courses", min_value=5, max_value=20, value=10)
+            top_n = st.number_input("📌 Courses", min_value=5, max_value=20, value=10)
 
     subject_filter, level_filter, institution_filter = [], [], []
     min_rate = 3.5
@@ -276,7 +289,7 @@ def main_app():
 
     if show_filters:
         with st.expander("Filter Options", expanded=True):
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2 = st.columns(2)
             with col1:
                 subjects = ["All"] + sorted(courses["Subject"].dropna().unique().tolist())
                 subject_selection = st.multiselect("📚 Subject", subjects, default=["All"])
@@ -284,42 +297,44 @@ def main_app():
                     subject_filter = []
                 else:
                     subject_filter = subject_selection
-            with col2:
+
                 levels = ["All"] + sorted(courses["Level"].dropna().unique().tolist())
                 level_selection = st.multiselect("🎯 Level", levels, default=["All"])
                 if "All" in level_selection:
                     level_filter = []
                 else:
                     level_filter = level_selection
-            with col3:
+
+            with col2:
                 institutions = ["All"] + sorted(courses["Institution"].dropna().unique().tolist())
                 institution_selection = st.multiselect("🏫 Institution", institutions, default=["All"])
                 if "All" in institution_selection:
                     institution_filter = []
                 else:
                     institution_filter = institution_selection
-            with col4:
+
                 min_rate = st.slider("⭐ Min Rating", 0.0, 5.0, min_rate, 0.1)
 
             # Apply filters button
-            if st.button("Apply Filters"):
-                st.session_state.filters_applied = True
-                st.session_state.subject_filter = subject_filter
-                st.session_state.level_filter = level_filter
-                st.session_state.institution_filter = institution_filter
-                st.session_state.min_rate = min_rate
-                st.rerun()
-
-            # Clear filters button
-            if st.button("Clear Filters"):
-                st.session_state.filters_applied = False
-                if 'subject_filter' in st.session_state:
-                    del st.session_state.subject_filter
-                if 'level_filter' in st.session_state:
-                    del st.session_state.level_filter
-                if 'institution_filter' in st.session_state:
-                    del st.session_state.institution_filter
-                st.rerun()
+            col_apply, col_clear = st.columns(2)
+            with col_apply:
+                if st.button("Apply Filters", use_container_width=True):
+                    st.session_state.filters_applied = True
+                    st.session_state.subject_filter = subject_filter
+                    st.session_state.level_filter = level_filter
+                    st.session_state.institution_filter = institution_filter
+                    st.session_state.min_rate = min_rate
+                    st.rerun()
+            with col_clear:
+                if st.button("Clear Filters", use_container_width=True):
+                    st.session_state.filters_applied = False
+                    if 'subject_filter' in st.session_state:
+                        del st.session_state.subject_filter
+                    if 'level_filter' in st.session_state:
+                        del st.session_state.level_filter
+                    if 'institution_filter' in st.session_state:
+                        del st.session_state.institution_filter
+                    st.rerun()
 
     # Use stored filter values if filters are applied
     if st.session_state.filters_applied:
@@ -331,44 +346,50 @@ def main_app():
     # ----------------- User Interests Input -----------------
     user_skills_input = st.text_input(
         "📝 Enter your interests/skills (comma separated):",
-        value=default_skills or "machine learning, python, finance"
+        value=default_skills,
+        help="Example: python, machine learning, Artificial Intelligence, HTML, CSS"
     )
 
-    # ----------------- Filter Courses -----------------
-    filtered = courses.copy()
+    # ----------------- Filter Courses with Optimization -----------------
+    search_terms = [term.strip() for term in search_text.split(',')] if search_text else []
 
-    # Apply search filter
-    if search_text:
-        search_terms = [term.strip() for term in search_text.split(',')]
-        mask = pd.Series(False, index=filtered.index)
-        for term in search_terms:
-            if term:
-                term_mask = (
-                        filtered["Title"].str.contains(term, case=False, na=False) |
-                        filtered["Gained Skills"].str.contains(term, case=False, na=False)
-                )
-                mask = mask | term_mask
-        filtered = filtered[mask]
-
-    # Apply other filters only if they're not empty
-    if subject_filter:
-        filtered = filtered[filtered["Subject"].isin(subject_filter)]
-    if level_filter:
-        filtered = filtered[filtered["Level"].isin(level_filter)]
-    if institution_filter:
-        filtered = filtered[filtered["Institution"].isin(institution_filter)]
-
-    filtered = filtered[filtered["Rate"] >= min_rate]
+    # Use cached filtering function
+    filtered = get_filtered_courses(
+        courses,
+        search_terms,
+        subject_filter,
+        level_filter,
+        institution_filter,
+        min_rate
+    )
 
     # ----------------- Recommendations -----------------
     recs = pd.DataFrame()
-    if st.button("🚀 Get Recommendations"):
-        recs = hybrid_recommendation(filtered, user_skills_input, {}, st.session_state.user_id, top_n=top_n)
+    if st.button("🚀 Get Recommendations", type="primary"):
+        with st.spinner("Generating recommendations..."):
+            # Determine which model to use based on selection
+            use_ncf = "NCF" in model_choice
+
+            # Call hybrid_recommendation
+            recs = hybrid_recommendation(
+                filtered,
+                user_skills_input,
+                {},
+                st.session_state.user_id,
+                top_n=top_n
+            )
+
+            # Display model info
+            model_name = "Neural Collaborative Filtering (NCF)" if use_ncf else "Singular Value Decomposition (SVD)"
+            st.success(f"📊 Recommendations generated using {model_name}")
 
     if recs.empty:
         if search_text or st.session_state.filters_applied:
-            display_courses = filtered
-            st.info("Showing filtered courses.")
+            display_courses = filtered.head(top_n)  # Limit to top_n for performance
+            if not display_courses.empty:
+                st.info(f"Showing {len(display_courses)} filtered courses.")
+            else:
+                st.warning("No courses match your search criteria.")
         else:
             display_courses = pd.DataFrame()  # Show nothing by default
     else:
