@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import sys, os
+import mysql.connector
 
 # Add parent dir to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -9,7 +10,7 @@ from models.models import DatabaseManager
 from src.utils import load_courses, generate_user_profile
 from src.hybrid import hybrid_recommendation
 
-# ----------------- Config -----------------
+# -----------------`` Config -----------------
 st.set_page_config(page_title="E-Learning Recommendation System", page_icon="🎓", layout="wide")
 
 # ----------------- MySQL Configuration -----------------
@@ -17,7 +18,7 @@ MYSQL_CONFIG = {
     "host": "localhost",
     "database": "elearning_db",
     "user": "root",
-    "password": "Sahil@2006",
+    "password": "mysql@#04",
     "port": 3306
 }
 db = DatabaseManager(**MYSQL_CONFIG)
